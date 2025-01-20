@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Générateur de Dithering</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f0f0f0;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+        }
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .control-group {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .control-group h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+        }
+        input[type="range"], input[type="number"], select {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        input[type="number"] {
+            padding: 5px;
+        }
+        canvas {
+            background: #adadad;
+            max-width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .loader {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            z-index: 1000;
+        }
+        .loader::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            margin-left: 10px;
+            border: 3px solid #fff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .stats {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f8f8;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .error {
+            display: none;
+            color: #d32f2f;
+            background: #ffebee;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Générateur de Dithering</h1>
+    
+    <div class="container">
+        <div class="controls">
+            <div class="control-group">
+                <label for="imageInput">Sélectionner une image</label>
+                <input type="file" id="imageInput" accept="image/*">
+            </div>
+            
+            <div class="control-group">
+                <h3>Tracés Sombres</h3>
+                <label>Nombre de points</label>
+                <input type="range" id="darkPoints" min="100" max="10000" value="1000">
+                <input type="number" id="darkPointsNum" value="1000">
+                
+                <label>Épaisseur des traits</label>
+                <input type="range" id="darkStrokeWidth" min="1" max="10" value="2">
+                
+                <label>Style de connexion</label>
+                <select id="darkConnectionStyle">
+                    <option value="line">Lignes droites</option>
+                    <option value="bezier">Courbes de Bézier</option>
+                    <option value="circle">Cercles</option>
+                    <option value="square">Carrés</option>
+                </select>
+                
+                <label>Tension des courbes</label>
+                <input type="range" id="darkTension" min="0" max="100" value="50">
+            </div>
+            
+            <div class="control-group">
+                <h3>Tracés Clairs</h3>
+                <label>Nombre de points</label>
+                <input type="range" id="lightPoints" min="100" max="10000" value="1000">
+                <input type="number" id="lightPointsNum" value="1000">
+                
+                <label>Épaisseur des traits</label>
+                <input type="range" id="lightStrokeWidth" min="1" max="10" value="2">
+                
+                <label>Style de connexion</label>
+                <select id="lightConnectionStyle">
+                    <option value="line">Lignes droites</option>
+                    <option value="bezier">Courbes de Bézier</option>
+                    <option value="circle">Cercles</option>
+                    <option value="square">Carrés</option>
+                </select>
+                
+                <label>Tension des courbes</label>
+                <input type="range" id="lightTension" min="0" max="100" value="50">
+            </div>
+            
+            <button id="exportDark">Exporter SVG Sombre</button>
+            <button id="exportLight">Exporter SVG Clair</button>
+            
+            <div class="stats">
+                Points sombres: <span id="darkPointCount">0</span><br>
+                Points clairs: <span id="lightPointCount">0</span><br>
+                Chemins générés: <span id="pathCount">0</span>
+            </div>
+        </div>
+        
+        <canvas id="canvas"></canvas>
+    </div>
+    
+    <div class="loader">Traitement en cours...</div>
+    <div class="error">Une erreur est survenue</div>
+
+    <script>
+        class DitherProcessor {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.maxSize = 1000;
+                this.darkPoints = [];
+                this.lightPoints = [];
+                this.currentFileName = '';
+            }
+
+            async processImage(file) {
+			console.log("coucou")
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        // Sauvegarde du nom de fichier
+                        this.currentFileName = file.name.split('.')[0];
+                        
+                        // Redimensionnement
+                        const scale = Math.min(1, this.maxSize / Math.max(img.width, img.height));
+                        this.canvas.width = img.width * scale;
+                        this.canvas.height = img.height * scale;
+                        
+                        // Dessin initial
+                        this.ctx.drawImage(img, 0, 0, this.canvas.width, this.canvas.height);
+                        
+                        // Conversion en niveaux de gris
+                        const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+                        this.processImageData(imageData);
+                        
+                        resolve();
+                    };
+                    img.onerror = reject;
+                    img.src = URL.createObjectURL(file);
+					
+                });
+            }
+
+            processImageData(imageData) {
+                const data = imageData.data;
+                this.pixels = [];
+                
+                for (let i = 0; i < data.length; i += 4) {
+                    const alpha = data[i + 3];
+                    if (alpha < 128) continue;
+                    
+                    const gray = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) / 255;
+                    const x = (i / 4) % imageData.width;
+                    const y = Math.floor((i / 4) / imageData.width);
+                    
+                    this.pixels.push({x, y, brightness: gray});
+                }
+            }
+
+            generatePoints(count, threshold) {
+                const points = [];
+                const candidates = this.pixels.filter(p => 
+                    threshold ? p.brightness > 0.5 : p.brightness <= 0.5
+                );
+                
+                for (let i = 0; i < count && candidates.length > 0; i++) {
+                    const index = Math.floor(Math.random() * candidates.length);
+                    points.push(candidates.splice(index, 1)[0]);
+                }
+                
+                return points;
+            }
+
+            connectPoints(points, style, tension) {
+                if (points.length < 2) return [];
+                
+                const paths = [];
+                const used = new Set();
+                let current = points[0];
+                used.add(points[0]);
+                let lastPoint = null;
+                
+                while (used.size < points.length) {
+                    let nearest = null;
+                    let minDist = Infinity;
+                    
+                    for (const point of points) {
+                        if (used.has(point)) continue;
+                        
+                        const dist = this.distance(current, point);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearest = point;
+                        }
+                    }
+                    
+                    if (nearest) {
+                        const path = this.createPath(current, nearest, style, tension, lastPoint);
+                        paths.push(path);
+                        lastPoint = current;
+                        current = nearest;
+                        used.add(nearest);
+                    }
+                }
+                
+                return paths;
+            }
+
+            distance(p1, p2) {
+                return Math.hypot(p2.x - p1.x, p2.y - p1.y);
+            }
+
+            createPath(start, end, style, tension, lastPoint) {
+                switch (style) {
+                    case 'bezier':
+                        return this.createBezierPath(start, end, tension, lastPoint);
+                    case 'circle':
+                        return this.createCirclePath(start, end);
+                    case 'square':
+                        return this.createSquarePath(start, end);
+                    default:
+                        return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+                }
+            }
+
+            createBezierPath(start, end, tension, lastPoint) {
+                const tensionFactor = tension / 100;
+                const dx = end.x - start.x;
+                const dy = end.y - start.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                let controlPoint1, controlPoint2;
+                
+                if (lastPoint) {
+                    // Utiliser le point précédent pour une transition plus douce
+                    const angle1 = Math.atan2(start.y - lastPoint.y, start.x - lastPoint.x);
+                    const angle2 = Math.atan2(dy, dx);
+                    
+                    controlPoint1 = {
+                        x: start.x + Math.cos(angle1) * dist * tensionFactor,
+                        y: start.y + Math.sin(angle1) * dist * tensionFactor
+                    };
+                    
+                    controlPoint2 = {
+                        x: end.x - Math.cos(angle2) * dist * tensionFactor,
+                        y: end.y - Math.sin(angle2) * dist * tensionFactor
+                    };
+                } else {
+                    // Premier segment
+                    controlPoint1 = {
+                        x: start.x + dx * tensionFactor,
+                        y: start.y
+                    };
+                    controlPoint2 = {
+                        x: end.x - dx * tensionFactor,
+                        y: end.y
+                    };
+                }
+                
+                return `M ${start.x} ${start.y} C ${controlPoint1.x} ${controlPoint1.y}, ${controlPoint2.x} ${controlPoint2.y}, ${end.x} ${end.y}`;
+            }
+
+            createCirclePath(start, end) {
+                const midX = (start.x + end.x) / 2;
+                const midY = (start.y + end.y) / 2;
+                const radius = this.distance(start, {x: midX, y: midY});
+                return `M ${start.x} ${start.y} A ${radius} ${radius} 0 0 1 ${end.x} ${end.y}`;
+            }
+
+            createSquarePath(start, end) {
+                const midX = (start.x + end.x) / 2;
+                return `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`;
+            }
+
+            draw() {
+                this.ctx.fillStyle = '#adadad';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Tracés sombres
+                this.ctx.strokeStyle = 'black';
+                this.drawPaths(this.darkPaths, document.getElementById('darkStrokeWidth').value);
+                
+                // Tracés clairs
+                this.ctx.strokeStyle = 'white';
+                this.drawPaths(this.lightPaths, document.getElementById('lightStrokeWidth').value);
+            }
+
+            drawPaths(paths, strokeWidth) {
+                this.ctx.lineWidth = strokeWidth;
+                for (const pathData of paths) {
+                    this.ctx.beginPath();
+                    const path = new Path2D(pathData);
+                    this.ctx.stroke(path);
+                }
+            }
+
+            exportSVG(type) {
+                if ((!this.darkPaths || !this.darkPaths.length) && (!this.lightPaths || !this.lightPaths.length)) {
+                    document.querySelector('.error').style.display = 'block';
+                    document.querySelector('.error').textContent = 'Aucun chemin à exporter';
+                    return;
+                }
+                
+                const paths = type === 'dark' ? this.darkPaths : this.lightPaths;
+                const strokeWidth = type === 'dark' ? 
+                    document.getElementById('darkStrokeWidth').value :
+                    document.getElementById('lightStrokeWidth').value;
+                
+                const svg = `
+                    <svg xmlns="http://www.w3.org/2000/svg" 
+                         viewBox="0 0 ${this.canvas.width} ${this.canvas.height}">
+                        <g stroke="black" stroke-width="${strokeWidth}" fill="none">
+                            ${paths.map(p => `<path d="${p}"/>`).join('\n')}
+                        </g>
+                    </svg>
+                `;
+                
+                const blob = new Blob([svg], {type: 'image/svg+xml'});
+                const url = URL.createObjectURL(blob);
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${this.currentFileName}-${type}-paths.svg`;
+                a.click();
+                
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        // Initialisation
+        const canvas = document.getElementById('canvas');
+        const processor = new DitherProcessor(canvas);
+        const loader = document.querySelector('.loader');
+        const error = document.querySelector('.error');
+
+        // Gestionnaires d'événements
+        document.getElementById('imageInput').addEventListener('change', async (e) => {
+            if (!e.target.files.length) return;
+            
+            loader.style.display = 'block';
+            error.style.display = 'none';
+            
+            try {
+                await processor.processImage(e.target.files[0]);
+                updateImage();
+            } catch (err) {
+                error.style.display = 'block';
+                error.textContent = 'Erreur lors du traitement de l\'image';
+                console.error(err);
+            } finally {
+                loader.style.display = 'none';
+            }
+        });
+
+        // Mise à jour des contrôles liés
+        document.getElementById('darkPoints').addEventListener('input', (e) => {
+            document.getElementById('darkPointsNum').value = e.target.value;
+            updateImage();
+        });
+
+        document.getElementById('darkPointsNum').addEventListener('input', (e) => {
+            document.getElementById('darkPoints').value = e.target.value;
+            updateImage();
+        });
+
+        document.getElementById('lightPoints').addEventListener('input', (e) => {
+            document.getElementById('lightPointsNum').value = e.target.value;
+            updateImage();
+        });
+
+        document.getElementById('lightPointsNum').addEventListener('input', (e) => {
+            document.getElementById('lightPoints').value = e.target.value;
+            updateImage();
+        });
+
+        // Autres contrôles
+        const controls = [
+            'darkStrokeWidth', 'lightStrokeWidth',
+            'darkConnectionStyle', 'lightConnectionStyle',
+            'darkTension', 'lightTension'
+        ];
+
+        controls.forEach(id => {
+            document.getElementById(id).addEventListener('input', updateImage);
+        });
+
+        // Boutons d'export
+        document.getElementById('exportDark').addEventListener('click', () => {
+            processor.exportSVG('dark');
+        });
+
+        document.getElementById('exportLight').addEventListener('click', () => {
+            processor.exportSVG('light');
+        });
+
+        function updateImage() {
+            if (!processor.pixels) return;
+            
+            const darkTension = parseInt(document.getElementById('darkTension').value);
+            const lightTension = parseInt(document.getElementById('lightTension').value);
+            
+            // Génération des points
+            processor.darkPoints = processor.generatePoints(
+                parseInt(document.getElementById('darkPoints').value),
+                false
+            );
+            
+            processor.lightPoints = processor.generatePoints(
+                parseInt(document.getElementById('lightPoints').value),
+                true
+            );
+            
+            // Connexion des points
+            processor.darkPaths = processor.connectPoints(
+                processor.darkPoints,
+                document.getElementById('darkConnectionStyle').value,
+                darkTension
+            );
+            
+            processor.lightPaths = processor.connectPoints(
+                processor.lightPoints,
+                document.getElementById('lightConnectionStyle').value,
+                lightTension
+            );
+            
+            // Mise à jour des statistiques
+            document.getElementById('darkPointCount').textContent = processor.darkPoints.length;
+            document.getElementById('lightPointCount').textContent = processor.lightPoints.length;
+            document.getElementById('pathCount').textContent = 
+                processor.darkPaths.length + processor.lightPaths.length;
+            
+            // Dessin
+            processor.draw();
+        }
+    </script>
+</body>
+</html>
